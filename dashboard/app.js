@@ -14,6 +14,9 @@
 //     maturity = 0.75 + 0.5 x min(age_days, 1460)/1460      (an unlisted age counts as 365 days)
 //     breadth  = 1 + 0.03 x min(chains - 1, 7)
 //   low/high  = the same product with the category's shrunk 25th / 75th percentile multiple.
+// Each row also carries the raw seven-day change the snapshot records (growth_raw_pct) beside the
+// clamped figure its momentum factor used; the detail view prints both, so the record is never
+// restated as the clamp.
 // deriveMultiples() below re-derives every category's median from the peer rows in data.js and the
 // method panel prints the comparison; impliedOf() recomputes a row's value from its stated inputs
 // and the detail drawer prints whether it matches board.json. The page and the board are the same
@@ -443,10 +446,14 @@
     var multNote = m.category_peers > 0
       ? (row.category || 'Uncategorised') + ': ' + m.category_peers + ' traded peer' + (m.category_peers === 1 ? '' : 's') + ', median ' + fmtMult(m.category_median) + ', shrunk toward the global ' + fmtMult(m.global_median)
       : 'no traded peer at scale in ' + (row.category || 'this category') + ': the global median of ' + DATA.global.peers + ' peers applies whole';
+    var rawGrowth = (m.growth_raw_pct === null || m.growth_raw_pct === undefined) ? m.growth_pct : m.growth_raw_pct;
+    var growthNote = rawGrowth !== m.growth_pct
+      ? '7d TVL change ' + fmtPct(rawGrowth) + ' on record; the model clamps it to ' + fmtPct(m.growth_pct)
+      : '7d TVL change ' + fmtPct(m.growth_pct) + ' (clamped to [' + M.momentum_floor + ', +' + M.momentum_cap + '])';
     var waterfall = el('div', { class: 'waterfall' },
       wrow('TVL (snapshot)', row.listed_at ? 'listed ' + row.listed_at + ' \u00b7 age ' + fmtAge(row.age_days) : 'listing date not recorded', fmtUsd(row.tvl_usd)),
       wrow('x Category multiple', multNote, fmtMult(m.category_multiple)),
-      wrow('x Momentum', '7d TVL change ' + fmtPct(m.growth_pct) + ' (clamped to [' + M.momentum_floor + ', +' + M.momentum_cap + '])', m.momentum_multiplier.toFixed(2) + 'x'),
+      wrow('x Momentum', growthNote, m.momentum_multiplier.toFixed(2) + 'x'),
       wrow('x Maturity', 'has run ' + fmtAge(row.age_days) + ' with no token on record', m.age_multiplier.toFixed(2) + 'x'),
       wrow('x Breadth', m.chain_count + ' chain' + (m.chain_count === 1 ? '' : 's') + ' on record', m.chain_multiplier.toFixed(2) + 'x'),
       el('div', { class: 'wrow total' }, el('span', { class: 'wlab', text: 'Implied launch value' }), el('span', { class: 'wval', text: fmtUsd(row.implied_value_usd) }))

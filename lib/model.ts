@@ -18,6 +18,9 @@
 //
 // Every row carries the multiple it used, the peer count behind it, the category and global medians
 // and each multiplier, so any reader (or the dashboard, which recomputes it) can audit the number.
+// A row also carries the raw seven-day change the snapshot records, beside the clamped figure the
+// momentum factor actually used: four records in this snapshot run past the clamp, and the audit
+// trail prints both rather than letting the clamped figure pose as the record.
 // No protocol name is ever special-cased: the same function scores every row.
 //
 // The board covers every slug in the snapshot's watchlist and adds every other rankable pre-token
@@ -133,6 +136,9 @@ export interface RowModel {
   global_median: number;
   multiple_low: number;
   multiple_high: number;
+  /** The seven-day change exactly as the snapshot records it (null when unreported). */
+  growth_raw_pct: number | null;
+  /** The change the momentum factor used: growth_raw_pct clamped to the model's band. */
   growth_pct: number;
   momentum_multiplier: number;
   age_multiplier: number;
@@ -327,10 +333,10 @@ export function impliedValue(
   asOf: string,
   stats: CategoryStats,
   model: ModelConstants = MODEL,
-): { implied: number; low: number; high: number; growthPct: number; momentumMult: number; maturityMult: number; breadthMult: number; age: number | null } {
+): { implied: number; low: number; high: number; growthRawPct: number | null; growthPct: number; momentumMult: number; maturityMult: number; breadthMult: number; age: number | null } {
   const age = ageDays(asOf, protocol.listed_at);
-  const rawGrowth = typeof protocol.change_7d === 'number' && Number.isFinite(protocol.change_7d) ? protocol.change_7d : 0;
-  const growthPct = Math.min(model.momentum_cap, Math.max(model.momentum_floor, rawGrowth));
+  const growthRawPct = typeof protocol.change_7d === 'number' && Number.isFinite(protocol.change_7d) ? protocol.change_7d : null;
+  const growthPct = Math.min(model.momentum_cap, Math.max(model.momentum_floor, growthRawPct ?? 0));
   // Every factor is rounded to 4 places before it is used, so the factors a row prints are exactly
   // the factors that priced it: a reader (or the dashboard) multiplying the printed inputs gets the
   // printed value back, to the dollar.
@@ -344,6 +350,7 @@ export function impliedValue(
     implied,
     low: Math.min(implied, at(stats.effective_low)),
     high: Math.max(implied, at(stats.effective_high)),
+    growthRawPct,
     growthPct,
     momentumMult,
     maturityMult,
@@ -439,13 +446,14 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
       global_median: round4(global.median),
       multiple_low: round4(s.stats.effective_low),
       multiple_high: round4(s.stats.effective_high),
+      growth_raw_pct: s.v.growthRawPct === null ? null : round4(s.v.growthRawPct),
       growth_pct: s.v.growthPct,
       momentum_multiplier: round4(s.v.momentumMult),
       age_multiplier: round4(s.v.maturityMult),
       chain_multiplier: round4(s.v.breadthMult),
       chain_count: s.p.chains.length,
     },
-    farm_steps: farmSteps(s.p, s.v.age),
+    farm_steps: farmSteps(s.p, s.v.age, { rank: i + 1, of: scored.length, implied: s.v.implied }),
   }));
 }
 
@@ -699,10 +707,12 @@ export function stepText(step: { text: string; cost: string; time: string }): st
 /**
  * A protocol's farm plan: seven steps, each an action with a cost and a time, built from the
  * protocol's own record — its category's way of being used, its first two chains by name, a capital
- * sized to its TVL, a hold sized to its age, and a note that follows its seven-day momentum. No
- * name is special-cased and no two protocols of different categories share a plan.
+ * sized to its TVL, a hold sized to its age, and a note that follows its seven-day momentum. The
+ * last step closes with the stake: the rank and implied launch value the board itself gives the
+ * protocol, so the plan names the prize it farms toward. No name is special-cased and no two
+ * protocols of different categories share a plan.
  */
-export function farmSteps(p: SnapshotProtocol, age: number | null): string[] {
+export function farmSteps(p: SnapshotProtocol, age: number | null, stake?: { rank: number; of: number; implied: number }): string[] {
   const profile = profileFor(p.category);
   const chain = chainOf(p);
   const capital = capitalFor(p);
@@ -758,8 +768,12 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): string[] {
     cost: `the $${capital} stays in the position`,
     time: `${hold} days`,
   });
+  const stakeText =
+    stake === undefined
+      ? ''
+      : ` The stake: this board ranks ${p.name} #${stake.rank} of ${stake.of} at an implied launch value of $${stake.implied.toLocaleString('en-US')} — the prize this plan farms toward, and it moves if the record does.`;
   steps.push({
-    text: `Open ${p.name}'s own app and look for its points, rewards or governance page; if it runs one, link this same wallet there and claim only from a link the app itself publishes — never pay a third party to claim. Write the wallet, the dates and every transaction in a farm log as you go.`,
+    text: `Open ${p.name}'s own app and look for its points, rewards or governance page; if it runs one, link this same wallet there and claim only from a link the app itself publishes — never pay a third party to claim. Write the wallet, the dates and every transaction in a farm log as you go.${stakeText}`,
     cost: 'no fee to check, and never pay to claim',
     time: '10 minutes, then 5 minutes a week for the log',
   });
